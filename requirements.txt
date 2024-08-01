@@ -2,3 +2,4 @@ matplotlib
 networkx
 ete3
 numpy
+scikit-learn
