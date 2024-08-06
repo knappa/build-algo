@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# implements a weighted BUILD algorithm based on Semple and Steel
+# implements a_species weighted BUILD algorithm based on Semple and Steel
 import argparse
 import itertools
 from typing import Dict, List, Literal, Tuple
