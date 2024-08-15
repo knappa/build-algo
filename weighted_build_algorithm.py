@@ -40,7 +40,7 @@ def gen_tree_weighted(
     *,
     node=None,
     tree=None,
-    method: Literal["best_random", "spectral"] = "spectral",
+    method: Literal["best_random", "spectral", "maxcut"] = "maxcut",
 ):
     if (node is not None and tree is None) or (node is None and tree is not None):
         assert "inconsistent state"
@@ -87,7 +87,7 @@ def gen_tree_weighted(
                     best_partition = partition
             subgraph_a = build_graph.subgraph(best_partition[0])
             subgraph_b = build_graph.subgraph(best_partition[1])
-        else:  # if method == "spectral":
+        elif method == "spectral":
             # https://scikit-learn.org/stable/modules/clustering.html#spectral-clustering-graphs
             # https://link.springer.com/article/10.1007/s11222-007-9033-z
             adj_mat = nx.to_numpy_array(build_graph, weight="capacity")
@@ -103,6 +103,62 @@ def gen_tree_weighted(
                 np.array(build_graph.nodes)[np.argwhere(sc.labels_ == 1).reshape(-1)]
             )
             subgraph_b = build_graph.subgraph(nodes_b)
+        else:  # if method == "maxcut":
+            # Assemble Triplet MaxCut matrices
+            good = np.zeros((len(species), len(species)), dtype=np.float64)
+            bad = np.zeros((len(species), len(species)), dtype=np.float64)
+            species_to_idx = {sp: idx for idx, sp in enumerate(species)}
+            for a, b, c in triplets:
+                weight = weights[(a, b, c)]
+                a_idx, b_idx, c_idx = map(lambda x: species_to_idx[x], (a, b, c))
+                # In Triplet MaxCut algo, the cherry is the "bad" one. For some reason.
+                bad[a_idx, b_idx] += weight
+                bad[b_idx, a_idx] += weight
+                # other pairs are "good"
+                good[a_idx, c_idx] += weight
+                good[c_idx, a_idx] += weight
+                good[b_idx, c_idx] += weight
+                good[c_idx, b_idx] += weight
+
+            embedding = np.random.normal(size=(len(species), 3))
+            while np.any(np.all(embedding == 0.0, axis=1)):
+                embedding = np.random.normal(size=(len(species), 3))
+            embedding /= np.linalg.norm(embedding, axis=1)
+            embedding = np.nan_to_num(embedding)
+
+            for _ in range(10):
+                cm = np.zeros((len(species), 3))
+                weights = np.zeros(len(species))
+                for i, j in itertools.combinations(range(len(species)), 2):
+                    cm[i, j] += embedding[j] * (good[i, j] - 3 * bad[i, j])
+                    weights[i] += good[i, j] - 3 * bad[i, j]
+
+                embedding[:, :] = cm / weights
+                embedding = np.nan_to_num(embedding)
+                embedding[
+                    np.linalg.norm(embedding, axis=1) == 0, :
+                ] += 1  # fix any zero norm (low prob event)
+                embedding /= np.linalg.norm(embedding, axis=1)
+                embedding = np.nan_to_num(embedding)
+
+            normal_vec = np.random.uniform(3)
+            while np.all(normal_vec == 0.0):
+                normal_vec = np.random.uniform(3)
+            normal_vec /= np.linalg.norm(normal_vec)
+
+            nodes_a = [
+                sp
+                for sp in species
+                if normal_vec @ embedding[species_to_idx[sp], :] >= 0
+            ]
+            subgraph_a = build_graph.subgraph(nodes_a)
+            nodes_b = [
+                sp
+                for sp in species
+                if normal_vec @ embedding[species_to_idx[sp], :] < 0
+            ]
+            subgraph_b = build_graph.subgraph(nodes_b)
+
         components = list(
             itertools.chain(
                 nx.connected_components(subgraph_a),
@@ -131,4 +187,4 @@ def gen_tree_weighted(
     return tree
 
 
-print(gen_tree_weighted(all_triplets, all_weights))
+print(gen_tree_weighted(all_triplets, all_weights, method="maxcut"))
