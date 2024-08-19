@@ -11,7 +11,6 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--phylip", required=True, help="phylip file")
 parser.add_argument("--output", required=True, help="output file")
 
-
 try:
     opt = parser.parse_args()
     print(opt)
@@ -27,15 +26,45 @@ except SystemExit:
 
 def seq_to_array(seq: str, seq_len_: int) -> np.ndarray:
     arr = np.zeros(seq_len_, dtype=np.int_)
+    a = 0b0001
+    c = 0b0010
+    g = 0b0100
+    t = 0b1000
     for idx, c_ in enumerate(seq):
-        if c_ in {"A", "a"}:
-            arr[idx] = 0
-        elif c_ in {"C", "c"}:
-            arr[idx] = 1
-        elif c_ in {"G", "g"}:
-            arr[idx] = 2
-        elif c_ in {"T", "t"}:
-            arr[idx] = 3
+        match c_.upper():
+            case "A":
+                arr[idx] = a
+            case "C":
+                arr[idx] = c
+            case "G":
+                arr[idx] = g
+            case "T":
+                arr[idx] = t
+            case "R":
+                arr[idx] = a + g
+            case "Y":
+                arr[idx] = c + t
+            case "S":
+                arr[idx] = g + c
+            case "W":
+                arr[idx] = a + t
+            case "K":
+                arr[idx] = g + t
+            case "M":
+                arr[idx] = a + c
+            case "B":
+                arr[idx] = c + g + t
+            case "D":
+                arr[idx] = a + g + t
+            case "H":
+                arr[idx] = a + c + t
+            case "V":
+                arr[idx] = a + c + g
+            case "N":
+                arr[idx] = a + c + g + t
+            case _:
+                # gap
+                arr[idx] = 0
     return arr
 
 
@@ -49,13 +78,26 @@ with open(opt.phylip, "r") as file:
         assert len(sequence) == seq_len, f"seq length mismatch for {species}"
         data[species] = seq_to_array(sequence, seq_len)
 
-
 with open(opt.output, "w") as file:
     for a_species, b_species, c_species in itertools.combinations(data.keys(), 3):
         P_ab = np.zeros((4, 4, 4), dtype=np.float64)
         a_seq, b_seq, c_seq = data[a_species], data[b_species], data[c_species]
+        gaps = 0  # TODO: use this or lose this? counts number of sites that have a gap in any of the sequences
         for site_idx in range(seq_len):
-            P_ab[a_seq[site_idx], b_seq[site_idx], c_seq[site_idx]] += 1
+            count = (
+                int(a_seq[site_idx]).bit_count()
+                * int(b_seq[site_idx]).bit_count()
+                * int(c_seq[site_idx]).bit_count()
+            )
+            if count == 0:
+                gaps += 1
+            else:
+                # find the non-zero bits of the sequence and fill in the array
+                a_opts = [k for k in range(4) if a_seq[site_idx] & (1 << k)]
+                b_opts = [k for k in range(4) if b_seq[site_idx] & (1 << k)]
+                c_opts = [k for k in range(4) if c_seq[site_idx] & (1 << k)]
+                for a_opt, b_opt, c_opt in itertools.product(a_opts, b_opts, c_opts):
+                    P_ab[a_opt, b_opt, c_opt] += 1 / count
 
         svd_score_ab = 0.0
         M_ab = np.zeros((4, 12, 12), dtype=np.float64)
@@ -68,7 +110,7 @@ with open(opt.output, "w") as file:
             M_ab[k, 8:12, 4:8] = -P_ab[:, :, k].T
 
             svd_score_ab += np.sum(
-                np.linalg.svd(M_ab[k, :, :], compute_uv=False)[9:] ** 2
+                np.linalg.svd(M_ab[k, :, :], compute_uv=False)[10:] ** 2
             )
         svd_score_ab = np.sqrt(svd_score_ab)
 
@@ -84,7 +126,7 @@ with open(opt.output, "w") as file:
             M_ac[k, 8:12, 4:8] = -P_ac[:, :, k].T
 
             svd_score_ac += np.sum(
-                np.linalg.svd(M_ac[k, :, :], compute_uv=False)[9:] ** 2
+                np.linalg.svd(M_ac[k, :, :], compute_uv=False)[10:] ** 2
             )
         svd_score_ac = np.sqrt(svd_score_ac)
 
@@ -100,9 +142,11 @@ with open(opt.output, "w") as file:
             M_bc[k, 8:12, 4:8] = -P_bc[:, :, k].T
 
             svd_score_bc += np.sum(
-                np.linalg.svd(M_bc[k, :, :], compute_uv=False)[9:] ** 2
+                np.linalg.svd(M_bc[k, :, :], compute_uv=False)[10:] ** 2
             )
         svd_score_bc = np.sqrt(svd_score_bc)
+
+        print(svd_score_ab, svd_score_bc, svd_score_bc)
 
         min_score = min([svd_score_ab, svd_score_ac, svd_score_bc])
         if svd_score_ab == min_score:
