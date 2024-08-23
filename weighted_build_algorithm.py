@@ -1,32 +1,45 @@
 #!/usr/bin/env python3
-# implements a_species weighted BUILD algorithm based on Semple and Steel
+# implements a weighted BUILD algorithm based on Semple and Steel
 import argparse
 import itertools
-from typing import Dict, List, Literal, Tuple
+from typing import Dict, List, Literal, Set, Tuple
 
 import networkx as nx
 import numpy as np
 from ete3 import Tree
-from sklearn.cluster import SpectralClustering
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--triplets", required=True, help="triplets file")
+parser.add_argument(
+    "--out",
+    type=str,
+    help="output file (Newick format). If unspecified, print to stdout",
+)
 
-opt = parser.parse_args()
-print(opt)
+try:
+    opt = parser.parse_args()
+    print(opt)
+except SystemExit:
+    # options for pasting into ipython
+    class Object:
+        pass
+
+    opt = Object()
+    opt.triplets = "test.txt"
+    opt.out = ""
 
 
 def get_data(trip_file):
-    species = set()
-    triplets = list()
-    weights = dict()
+    species: Set[str] = set()
+    triplets: List[Tuple[str, str, str]] = list()
+    weights: Dict[Tuple[str, str, str], float] = dict()
 
     with open(trip_file, "r") as file:
         for line in file:
             a, b, c, weight = line.strip().split(" ")
             triplets.append((a, b, c))
             species = species.union([a, b, c])
-            weights[(a, b, c)] = weight
+            weights[(a, b, c)] = float(weight)
 
     return species, triplets, weights
 
@@ -40,7 +53,7 @@ def gen_tree_weighted(
     *,
     node=None,
     tree=None,
-    method: Literal["best_random", "spectral", "maxcut"] = "maxcut",
+    method: Literal["best_random", "spectral", "maxcut"] = "spectral",
 ):
     if (node is not None and tree is None) or (node is None and tree is not None):
         assert "inconsistent state"
@@ -68,6 +81,7 @@ def gen_tree_weighted(
         if build_graph.has_edge(a, b):
             capacity += build_graph.edges[a, b]["capacity"]
             print(f"graph already had an edge between {a} and {b}, summing capacities")
+            # capacity = np.max([capacity, build_graph.edges[a, b]["capacity"]])
         build_graph.add_edge(a, b, capacity=capacity)
         species = species.union([a, b, c])
 
@@ -88,20 +102,10 @@ def gen_tree_weighted(
             subgraph_a = build_graph.subgraph(best_partition[0])
             subgraph_b = build_graph.subgraph(best_partition[1])
         elif method == "spectral":
-            # https://scikit-learn.org/stable/modules/clustering.html#spectral-clustering-graphs
-            # https://link.springer.com/article/10.1007/s11222-007-9033-z
-            adj_mat = nx.to_numpy_array(build_graph, weight="capacity")
-            sc = SpectralClustering(
-                2, affinity="precomputed", n_init=100, assign_labels="discretize"
-            )
-            sc.fit(adj_mat)
-            nodes_a = list(
-                np.array(build_graph.nodes)[np.argwhere(sc.labels_ == 0).reshape(-1)]
-            )
+            pos = nx.spectral_layout(build_graph, weight="capacity", dim=1)
+            nodes_a = [node for node in build_graph.nodes if pos[node] <= 0]
             subgraph_a = build_graph.subgraph(nodes_a)
-            nodes_b = list(
-                np.array(build_graph.nodes)[np.argwhere(sc.labels_ == 1).reshape(-1)]
-            )
+            nodes_b = [node for node in build_graph.nodes if pos[node] > 0]
             subgraph_b = build_graph.subgraph(nodes_b)
         else:  # if method == "maxcut":
             # Assemble Triplet MaxCut matrices
@@ -182,9 +186,18 @@ def gen_tree_weighted(
                 for member in comp:
                     subnode.add_child(name=member)
             else:
-                gen_tree_weighted(comp_triplets, weights, node=subnode, tree=tree)
+                gen_tree_weighted(
+                    comp_triplets, weights, node=subnode, tree=tree, method=method
+                )
 
     return tree
 
 
-print(gen_tree_weighted(all_triplets, all_weights, method="maxcut"))
+tree = gen_tree_weighted(all_triplets, all_weights, method="spectral")
+
+output = tree.write(format=9)
+if len(opt.out) == 0:
+    print(output, flush=True)
+else:
+    with open(opt.out, "w") as file:
+        file.writelines(output)
