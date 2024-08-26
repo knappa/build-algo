@@ -16,17 +16,17 @@ parser.add_argument(
     help="output file (Newick format). If unspecified, print to stdout",
 )
 
-try:
-    opt = parser.parse_args()
-    print(opt)
-except SystemExit:
-    # options for pasting into ipython
-    class Object:
-        pass
-
-    opt = Object()
-    opt.triplets = "test.txt"
-    opt.out = ""
+# try:
+opt = parser.parse_args()
+#     print(opt)
+# except SystemExit:
+#     # options for pasting into ipython
+#     class Object:
+#         pass
+#
+#     opt = Object()
+#     opt.triplets = "test.txt"
+#     opt.out = ""
 
 
 def get_data(trip_file):
@@ -80,7 +80,7 @@ def gen_tree_weighted(
         capacity = weights[(a, b, c)]
         if build_graph.has_edge(a, b):
             capacity += build_graph.edges[a, b]["capacity"]
-            print(f"graph already had an edge between {a} and {b}, summing capacities")
+            # print(f"graph already had an edge between {a} and {b}, summing capacities")
             # capacity = np.max([capacity, build_graph.edges[a, b]["capacity"]])
         build_graph.add_edge(a, b, capacity=capacity)
         species = species.union([a, b, c])
@@ -196,7 +196,7 @@ def gen_tree_weighted(
 tree = gen_tree_weighted(all_triplets, all_weights, method="spectral")
 
 output = tree.write(format=9)
-if len(opt.out) == 0:
+if opt.out is None or len(opt.out) == 0:
     print(output, flush=True)
 else:
     with open(opt.out, "w") as file:

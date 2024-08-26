@@ -12,7 +12,7 @@ def cofactor(M):
         # noinspection PyTypeChecker
         N[r, c] = np.linalg.det(
             np.block(
-                [[M[0:r, 0:c], M[0:r, c + 1:]], [M[r + 1:, 0:c], M[r + 1:, c + 1:]]]
+                [[M[0:r, 0:c], M[0:r, c + 1 :]], [M[r + 1 :, 0:c], M[r + 1 :, c + 1 :]]]
             )
         )
     return N
