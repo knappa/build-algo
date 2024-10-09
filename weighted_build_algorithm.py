@@ -2,9 +2,10 @@
 # implements a weighted BUILD algorithm based on Semple and Steel
 import argparse
 from functools import reduce
-from typing import Dict, List, Literal, Set, Tuple
+from typing import Dict, List, Set, Tuple
 
 import numpy as np
+import scipy
 from ete3 import Tree
 
 parser = argparse.ArgumentParser()
@@ -14,20 +15,25 @@ parser.add_argument(
     type=str,
     help="output file (Newick format). If unspecified, print to stdout",
 )
+parser.add_argument(
+    "--method",
+    choices=["P", "L"],
+    required=True,
+    help="Markov (P) or Laplacian (L) clustering method",
+)
 
 # try:
 opt = parser.parse_args()
 
 
-#     print(opt)
-# except SystemExit:
-#     # options for pasting into ipython
-#     class Object:
-#         pass
-#
-#     opt = Object()
-#     opt.triplets = "test.txt"
-#     opt.out = ""
+def np_full_print(nparray):
+    import shutil
+
+    # noinspection PyTypeChecker
+    with np.printoptions(
+        threshold=np.inf, linewidth=shutil.get_terminal_size((80, 20)).columns
+    ):
+        print(nparray)
 
 
 def get_data(trip_file, file_weights=True):
@@ -57,7 +63,6 @@ def gen_tree_weighted(
     *,
     node=None,
     tree=None,
-    method: Literal["best_random", "spectral", "maxcut"] = "spectral",
 ):
     if (node is not None and tree is None) or (node is None and tree is not None):
         assert "inconsistent state"
@@ -74,32 +79,113 @@ def gen_tree_weighted(
         subnode.add_child(name=b)
         return tree
 
-    species: set = set(reduce(set.union, triplets, set()))
+    species: list = list(set(reduce(set.union, triplets, set())))
+    species.sort()
     species_to_index = {s: i for i, s in enumerate(species)}
-    adj_matrix = np.zeros((len(species), len(species)), dtype=np.float64)
-    degree = np.zeros(len(species), dtype=np.float64)
+    adj_count_matrix = np.zeros((len(species), len(species)), dtype=np.float64)
+    adj_weight_matrix = np.zeros((len(species), len(species)), dtype=np.float64)
     for a, b, c in triplets:
-        adj_matrix[species_to_index[a], species_to_index[b]] += weights[(a, b, c)]
-        degree[species_to_index[a]] += 1
-        degree[species_to_index[b]] += 1
+        adj_count_matrix[species_to_index[a], species_to_index[b]] += 1
+        adj_count_matrix[species_to_index[b], species_to_index[a]] += 1
+        adj_weight_matrix[species_to_index[a], species_to_index[b]] += weights[
+            (a, b, c)
+        ]
+        adj_weight_matrix[species_to_index[b], species_to_index[a]] += weights[
+            (a, b, c)
+        ]
 
-    inv_deg = np.diag([d**-1 if d != 0 else 1 for d in degree])
+    with np.errstate(divide="ignore", invalid="ignore"):
+        adj_matrix = np.nan_to_num(adj_weight_matrix / adj_count_matrix, nan=0.0)
+    degree = np.sum(adj_matrix, axis=1)
 
-    # noinspection PyPep8Naming
-    P = inv_deg @ adj_matrix
-
-    evals, evecs = np.linalg.eig(P)  # right eigenvectors
-
-    idx = np.argmin((np.abs(evals) - 1) ** 2)
-    split_vec = evecs[idx]
+    # print(species_to_index)
+    # print(adj_matrix)
 
     component_a = []
     component_b = []
-    for idx, spec in enumerate(species):
-        if split_vec[idx] <= 0:
-            component_a.append(spec)
-        else:
-            component_b.append(spec)
+
+    match opt.method:
+        case "P":
+            P = np.diag([d**-1 if d != 0 else 0 for d in degree]) @ adj_matrix
+            # evals, evecs = np.linalg.eig(P.transpose())  # left eigenvectors
+            evals, evecs = np.linalg.eig(P)  # right eigenvectors
+
+            special_evals = np.isclose(evals, 1.0) | np.isclose(evals, 0.0)
+            num_special_evals = np.sum(special_evals)
+            if num_special_evals > 1:
+                # noinspection PyTupleAssignmentBalance
+                L, U = scipy.linalg.lu(
+                    evecs[:, special_evals].T.astype(np.float16).astype(np.float64),
+                    permute_l=True,
+                )
+                U = U.real.astype(np.float16).astype(np.float64)
+                component_vec = U[-1, :]
+                component_a = np.array(species)[component_vec == 0]
+                component_b = np.array(species)[component_vec != 0]
+            else:
+                # TODO: double (or approx double) eigenvalues
+                idcs = np.argsort((evals - 1) ** 2)
+                for ev_ordered_idx in range(len(evals)):
+                    if np.isclose(evals[idcs[ev_ordered_idx]], 1.0):
+                        continue
+
+                    evecs = evecs.real.astype(np.float16)
+
+                    pos_count = np.sum(evecs[:, idcs[ev_ordered_idx]] > 0)
+                    neg_count = np.sum(evecs[:, idcs[ev_ordered_idx]] < 0)
+                    # put the zeros with whichever side is smaller, ties to negative side
+                    if pos_count < neg_count:
+                        component_a = np.array(species)[
+                            evecs[:, idcs[ev_ordered_idx]] >= 0
+                        ]
+                        component_b = np.array(species)[
+                            evecs[:, idcs[ev_ordered_idx]] < 0
+                        ]
+                    else:
+                        component_a = np.array(species)[
+                            evecs[:, idcs[ev_ordered_idx]] > 0
+                        ]
+                        component_b = np.array(species)[
+                            evecs[:, idcs[ev_ordered_idx]] <= 0
+                        ]
+                    break
+        case "L":
+            L = np.diag(degree) - adj_matrix
+            evals, evecs = np.linalg.eig(L)  # right eigenvectors
+            evals = evals.real.astype(np.float16)
+            evecs = evecs.real.astype(np.float16)
+            np_full_print(evals)
+            np_full_print(evecs)
+            idcs = np.argsort(evals)
+            # When the graph is not connected, first eigenvalues are indicators for components.
+            for ev_ordered_idx in range(len(evals)):
+                if np.all(evecs[:, idcs[ev_ordered_idx]] > 0) or np.all(
+                    evecs[:, idcs[ev_ordered_idx]] < 0
+                ):
+                    continue
+
+                assert not np.all(
+                    evecs[idcs[ev_ordered_idx]] == 0
+                ), "all zero eigenvector?"
+
+                pos_count = np.sum(evecs[:, idcs[ev_ordered_idx]] > 0)
+                neg_count = np.sum(evecs[:, idcs[ev_ordered_idx]] < 0)
+                # put the zeros with whichever side is smaller, ties to negative side
+                if pos_count < neg_count:
+                    component_a = np.array(species)[evecs[:, idcs[ev_ordered_idx]] >= 0]
+                    component_b = np.array(species)[evecs[:, idcs[ev_ordered_idx]] < 0]
+                else:
+                    component_a = np.array(species)[evecs[:, idcs[ev_ordered_idx]] > 0]
+                    component_b = np.array(species)[evecs[:, idcs[ev_ordered_idx]] <= 0]
+                break
+        case _:
+            assert False
+
+    # print(f"{component_a=}")
+    # print(f"{component_b=}")
+    # print()
+
+    assert len(component_a) > 0 and len(component_b) > 0
 
     for comp in [component_a, component_b]:
         if len(comp) == 1:
@@ -117,14 +203,12 @@ def gen_tree_weighted(
                 for member in comp:
                     subnode.add_child(name=member)
             else:
-                gen_tree_weighted(
-                    comp_triplets, weights, node=subnode, tree=tree, method=method
-                )
+                gen_tree_weighted(comp_triplets, weights, node=subnode, tree=tree)
 
     return tree
 
 
-w_tree = gen_tree_weighted(all_triplets, all_weights, method="spectral")
+w_tree = gen_tree_weighted(all_triplets, all_weights)
 
 output = w_tree.write(format=9)
 if opt.out is None or len(opt.out) == 0:

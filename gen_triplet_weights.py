@@ -3,6 +3,7 @@
 
 import argparse
 import itertools
+import sys
 from typing import Dict, List
 
 import numpy as np
@@ -11,17 +12,16 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--phylip", required=True, help="phylip file")
 parser.add_argument("--output", required=True, help="output file")
 
-# try:
-opt = parser.parse_args()
-# print(opt)
-# except SystemExit:
-#     # options for pasting into ipython
-#     class Object:
-#         pass
-#
-#     opt = Object()
-#     opt.phylip = "data/alignment_GTR_30_taxa_1K_sites_rtree1.phy"
-#     opt.output = "test.txt"
+if hasattr(sys, "ps1"):
+    # options for pasting into ipython
+    class Object:
+        pass
+
+    opt = Object()
+    opt.phylip = "data/alignment_GTR_30_taxa_1K_sites_rtree1.phy"
+    opt.output = "test.txt"
+else:
+    opt = parser.parse_args()
 
 
 def seq_to_array(seq: str, seq_len_: int) -> np.ndarray:
@@ -122,7 +122,7 @@ with open(opt.output, "w") as file:
                 # M[8:12, 4:8] = -P_cherry[:, :, k].T
 
                 svs = np.linalg.svd(M[:, :], compute_uv=False)
-                svs /= np.mean(svs)
+                # svs /= np.mean(svs)
                 score += np.sum(svs[8:] ** 2) / 8
 
             for k in range(4):
@@ -143,7 +143,7 @@ with open(opt.output, "w") as file:
                 # N[8:12, 4:8] = -np.sum(P_cherry,axis=0).T
 
                 svs = np.linalg.svd(N[:, :], compute_uv=False)
-                svs /= np.mean(svs)
+                # svs /= np.mean(svs)
                 score += np.sum(svs[8:] ** 2) / 8
 
             svd_score[cherry_idx] = np.sqrt(score)

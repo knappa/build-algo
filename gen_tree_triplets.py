@@ -4,6 +4,7 @@
 
 import argparse
 import itertools
+import sys
 
 import ete3
 import numpy as np
@@ -17,10 +18,7 @@ parser.add_argument(
 parser.add_argument("--wt", type=float, default=1.0, help="weight for true triplets")
 parser.add_argument("--wf", type=float, default=0.3, help="weight for false triplets")
 
-try:
-    opt = parser.parse_args()
-    print(opt)
-except SystemExit:
+if hasattr(sys, "ps1"):
     # options for pasting into ipython
     class Object:
         pass
@@ -31,6 +29,9 @@ except SystemExit:
     opt.p = 0.01
     opt.wt = 1.0
     opt.wf = 0.3
+else:
+    opt = parser.parse_args()
+    print(opt)
 
 tree = ete3.Tree(opt.newick)
 leaves = [leaf for leaf in tree.traverse("postorder") if leaf.is_leaf()]
