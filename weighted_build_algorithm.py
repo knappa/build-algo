@@ -98,12 +98,6 @@ def gen_tree_weighted(
         adj_matrix = np.nan_to_num(adj_weight_matrix / adj_count_matrix, nan=0.0)
     degree = np.sum(adj_matrix, axis=1)
 
-    # print(species_to_index)
-    # print(adj_matrix)
-
-    component_a = []
-    component_b = []
-
     match opt.method:
         case "P":
             P = np.diag([d**-1 if d != 0 else 0 for d in degree]) @ adj_matrix
