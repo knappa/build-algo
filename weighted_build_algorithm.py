@@ -123,67 +123,76 @@ def gen_tree_weighted(
                 component_a = np.array(species)[component_vec == 0]
                 component_b = np.array(species)[component_vec != 0]
             else:
-                # TODO: double (or approx double) eigenvalues
                 idcs = np.argsort((evals - 1) ** 2)
-                for ev_ordered_idx in range(len(evals)):
-                    if np.isclose(evals[idcs[ev_ordered_idx]], 1.0):
-                        continue
+                closest_idx_not_one = idcs[1]
+                special_evals = np.isclose(evals, evals[closest_idx_not_one])
 
-                    evecs = evecs.real.astype(np.float16)
+                if np.sum(special_evals) > 1:
+                    # noinspection PyTupleAssignmentBalance
+                    L, U = scipy.linalg.lu(
+                        evecs[:, special_evals].astype(np.float16).astype(np.float64).T,
+                        permute_l=True,
+                    )
+                    U = U.real.astype(np.float16)
+                    component_vec = U[-1, :]
+                else:
+                    component_vec = evecs[:, closest_idx_not_one]
 
-                    pos_count = np.sum(evecs[:, idcs[ev_ordered_idx]] > 0)
-                    neg_count = np.sum(evecs[:, idcs[ev_ordered_idx]] < 0)
-                    # put the zeros with whichever side is smaller, ties to negative side
-                    if pos_count < neg_count:
-                        component_a = np.array(species)[
-                            evecs[:, idcs[ev_ordered_idx]] >= 0
-                        ]
-                        component_b = np.array(species)[
-                            evecs[:, idcs[ev_ordered_idx]] < 0
-                        ]
-                    else:
-                        component_a = np.array(species)[
-                            evecs[:, idcs[ev_ordered_idx]] > 0
-                        ]
-                        component_b = np.array(species)[
-                            evecs[:, idcs[ev_ordered_idx]] <= 0
-                        ]
-                    break
-        case "L":
-            L = np.diag(degree) - adj_matrix
-            evals, evecs = np.linalg.eig(L)  # right eigenvectors
-            evals = evals.real.astype(np.float16)
-            evecs = evecs.real.astype(np.float16)
-            np_full_print(evals)
-            np_full_print(evecs)
-            idcs = np.argsort(evals)
-            # When the graph is not connected, first eigenvalues are indicators for components.
-            for ev_ordered_idx in range(len(evals)):
-                if np.all(evecs[:, idcs[ev_ordered_idx]] > 0) or np.all(
-                    evecs[:, idcs[ev_ordered_idx]] < 0
-                ):
-                    continue
-
-                assert not np.all(
-                    evecs[idcs[ev_ordered_idx]] == 0
-                ), "all zero eigenvector?"
-
-                pos_count = np.sum(evecs[:, idcs[ev_ordered_idx]] > 0)
-                neg_count = np.sum(evecs[:, idcs[ev_ordered_idx]] < 0)
+                pos_count = np.sum(component_vec > 0)
+                neg_count = np.sum(component_vec < 0)
                 # put the zeros with whichever side is smaller, ties to negative side
                 if pos_count < neg_count:
-                    component_a = np.array(species)[evecs[:, idcs[ev_ordered_idx]] >= 0]
-                    component_b = np.array(species)[evecs[:, idcs[ev_ordered_idx]] < 0]
+                    component_a = np.array(species)[component_vec >= 0]
+                    component_b = np.array(species)[component_vec < 0]
                 else:
-                    component_a = np.array(species)[evecs[:, idcs[ev_ordered_idx]] > 0]
-                    component_b = np.array(species)[evecs[:, idcs[ev_ordered_idx]] <= 0]
-                break
+                    component_a = np.array(species)[component_vec > 0]
+                    component_b = np.array(species)[component_vec <= 0]
+        case "L":
+            L = np.diag(degree) - adj_matrix
+            evals, evecs = np.linalg.eigh(L)  # right eigenvectors
+            evals = evals.real.astype(np.float16).astype(np.float64)
+            evecs = evecs.real.astype(np.float16).astype(np.float64)
+
+            special_evals = np.isclose(evals, 0.0)
+            num_special_evals = np.sum(special_evals)
+            if num_special_evals > 1:
+                # When the graph is not connected, first eigenvalues are indicators for components.
+                # noinspection PyTupleAssignmentBalance
+                L, U = scipy.linalg.lu(
+                    evecs[:, special_evals].T,
+                    permute_l=True,
+                )
+                U = U.real.astype(np.float16)
+                component_vec = U[-1, :]
+                component_a = np.array(species)[component_vec == 0]
+                component_b = np.array(species)[component_vec != 0]
+            else:
+                idcs = np.argsort(evals)
+                second_smallest_idx = idcs[1]
+                special_evals = np.isclose(evals, evals[second_smallest_idx])
+
+                if np.sum(special_evals) > 1:
+                    # noinspection PyTupleAssignmentBalance
+                    L, U = scipy.linalg.lu(
+                        evecs[:, special_evals].T,
+                        permute_l=True,
+                    )
+                    U = U.real.astype(np.float16)
+                    component_vec = U[-1, :]
+                else:
+                    component_vec = evecs[:, second_smallest_idx]
+
+                pos_count = np.sum(component_vec > 0)
+                neg_count = np.sum(component_vec < 0)
+                # put the zeros with whichever side is smaller, ties to negative side
+                if pos_count < neg_count:
+                    component_a = np.array(species)[component_vec >= 0]
+                    component_b = np.array(species)[component_vec < 0]
+                else:
+                    component_a = np.array(species)[component_vec > 0]
+                    component_b = np.array(species)[component_vec <= 0]
         case _:
             assert False
-
-    # print(f"{component_a=}")
-    # print(f"{component_b=}")
-    # print()
 
     assert len(component_a) > 0 and len(component_b) > 0
 
