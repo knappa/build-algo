@@ -11,9 +11,7 @@ def cofactor(M):
     for r, c in itertools.product(range(M.shape[0]), range(M.shape[1])):
         # noinspection PyTypeChecker
         N[r, c] = np.linalg.det(
-            np.block(
-                [[M[0:r, 0:c], M[0:r, c + 1 :]], [M[r + 1 :, 0:c], M[r + 1 :, c + 1 :]]]
-            )
+            np.block([[M[0:r, 0:c], M[0:r, c + 1 :]], [M[r + 1 :, 0:c], M[r + 1 :, c + 1 :]]])
         )
     return N
 
@@ -76,11 +74,7 @@ for P in [P_sim, P_sim_false1, P_sim_false2]:
         D = -A.T
         E = -B.T
         F = -C.T
-        print(
-            np.linalg.svd(
-                C @ np.linalg.inv(B) @ A + D @ np.linalg.inv(E) @ F, compute_uv=False
-            )
-        )
+        print(np.linalg.svd(C @ np.linalg.inv(B) @ A + D @ np.linalg.inv(E) @ F, compute_uv=False))
     print()
 
 # for a_species, b_species, c_species in itertools.combinations(data.keys(), 3):

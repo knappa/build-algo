@@ -36,9 +36,7 @@ def np_full_print(nparray):
     import shutil
 
     # noinspection PyTypeChecker
-    with np.printoptions(
-            threshold=np.inf, linewidth=shutil.get_terminal_size((80, 20)).columns
-    ):
+    with np.printoptions(threshold=np.inf, linewidth=shutil.get_terminal_size((80, 20)).columns):
         print(nparray)
 
 
@@ -64,11 +62,11 @@ all_species, all_triplets, all_weights = get_data(opt.triplets)
 
 
 def gen_tree_weighted(
-        triplets: List[Tuple[str, str, str]],
-        weights: Dict[Tuple[str, str, str], float],
-        *,
-        node=None,
-        tree=None,
+    triplets: List[Tuple[str, str, str]],
+    weights: Dict[Tuple[str, str, str], float],
+    *,
+    node=None,
+    tree=None,
 ):
     if (node is not None and tree is None) or (node is None and tree is not None):
         assert "inconsistent state"
@@ -93,12 +91,8 @@ def gen_tree_weighted(
     for a, b, c in triplets:
         adj_count_matrix[species_to_index[a], species_to_index[b]] += 1
         adj_count_matrix[species_to_index[b], species_to_index[a]] += 1
-        adj_weight_matrix[species_to_index[a], species_to_index[b]] += weights[
-            (a, b, c)
-        ]
-        adj_weight_matrix[species_to_index[b], species_to_index[a]] += weights[
-            (a, b, c)
-        ]
+        adj_weight_matrix[species_to_index[a], species_to_index[b]] += weights[(a, b, c)]
+        adj_weight_matrix[species_to_index[b], species_to_index[a]] += weights[(a, b, c)]
 
     with np.errstate(divide="ignore", invalid="ignore"):
         adj_matrix = np.nan_to_num(adj_weight_matrix / adj_count_matrix, nan=0.0)
@@ -127,9 +121,7 @@ def gen_tree_weighted(
         elif len(comp) > 1:
             # filter triplets by component
             comp_triplets = [
-                (a, b, c)
-                for (a, b, c) in triplets
-                if all([x in comp for x in [a, b, c]])
+                (a, b, c) for (a, b, c) in triplets if all([x in comp for x in [a, b, c]])
             ]
             subnode = node.add_child()
             if len(comp_triplets) == 0:
@@ -256,7 +248,7 @@ def spectral_laplacian(*, adj_matrix, species):
 
 def markov_p(*, adj_matrix, species):
     degree = np.sum(adj_matrix, axis=1)
-    P = np.diag([d ** -1 if d != 0 else 0 for d in degree]) @ adj_matrix
+    P = np.diag([d**-1 if d != 0 else 0 for d in degree]) @ adj_matrix
     # evals, evecs = np.linalg.eig(P.transpose())  # left eigenvectors
     evals, evecs = np.linalg.eig(P)  # right eigenvectors
     special_evals = np.isclose(evals, 1.0) | np.isclose(evals, 0.0)

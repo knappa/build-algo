@@ -11,21 +11,27 @@ import numpy as np
 parser = argparse.ArgumentParser()
 parser.add_argument("--phylip", required=True, help="phylip file")
 parser.add_argument("--output", required=True, help="output file")
+parser.add_argument(
+    "--method",
+    choices=["J", "P"],
+    required=True,
+    help="use Julia's (J) or the Paper's (P) array structure",
+)
 
 if hasattr(sys, "ps1"):
-    # options for pasting into ipython
-    class Object:
-        pass
-
-    opt = Object()
-    opt.phylip = "data/alignment_GTR_30_taxa_1K_sites_rtree1.phy"
-    opt.output = "test.txt"
+    # default args for pasting into ipython
+    opt = parser.parse_args(
+        "--phylip data/alignment_GTR_30_taxa_1K_sites_rtree1.phy "
+        "--output test.txt "
+        "--method J".split()
+    )
 else:
     opt = parser.parse_args()
+print(opt)
 
 
-def seq_to_array(seq: str, seq_len_: int) -> np.ndarray:
-    arr = np.zeros(seq_len_, dtype=np.int_)
+def seq_to_array(seq: str) -> np.ndarray:
+    arr = np.zeros(len(seq), dtype=np.int8)
     a = 0b0001
     c = 0b0010
     g = 0b0100
@@ -76,7 +82,7 @@ with open(opt.phylip, "r") as file:
         species, *sequence = line.strip().split()
         sequence = "".join(sequence)
         assert len(sequence) == seq_len, f"seq length mismatch for {species}"
-        data[species] = seq_to_array(sequence, seq_len)
+        data[species] = seq_to_array(sequence)
 
 with open(opt.output, "w") as file:
     for a_species, b_species, c_species in itertools.combinations(data.keys(), 3):
@@ -99,52 +105,58 @@ with open(opt.output, "w") as file:
                 for a_opt, b_opt, c_opt in itertools.product(a_opts, b_opts, c_opts):
                     P[a_opt, b_opt, c_opt] += 1 / count
 
-        patterns = [(0, 1, 2), (0, 2, 1), (1, 2, 0)]
+        triplet_patterns = [(0, 1, 2), (0, 2, 1), (1, 2, 0)]
         svd_score = np.zeros(3, dtype=np.float64)
-        for cherry_idx, transpose_pattern in enumerate(patterns):
+        for cherry_idx, transpose_pattern in enumerate(triplet_patterns):
             score = 0.0
             P_cherry = P.transpose(transpose_pattern)
             for k in range(4):
                 M = np.zeros((12, 12), dtype=np.float64)
-                # Julia:
-                M[0:4, 4:8] = np.sum(P_cherry, axis=0).T
-                M[0:4, 8:12] = np.sum(P_cherry, axis=1).T
-                M[4:8, 0:4] = -np.sum(P_cherry, axis=0)
-                M[4:8, 8:12] = P_cherry[:, :, k]
-                M[8:12, 0:4] = -np.sum(P_cherry, axis=1)
-                M[8:12, 4:8] = -P_cherry[:, :, k].T
-                # # paper:
-                # M[0:4, 4:8] = np.sum(P_cherry, axis=1).T
-                # M[0:4, 8:12] = np.sum(P_cherry, axis=0).T
-                # M[4:8, 0:4] = -np.sum(P_cherry, axis=1)
-                # M[4:8, 8:12] = P_cherry[:, :, k]
-                # M[8:12, 0:4] = -np.sum(P_cherry, axis=0)
-                # M[8:12, 4:8] = -P_cherry[:, :, k].T
+                if opt.method == "J":
+                    # Julia:
+                    M[0:4, 4:8] = np.sum(P_cherry, axis=0).T
+                    M[0:4, 8:12] = np.sum(P_cherry, axis=1).T
+                    M[4:8, 0:4] = -np.sum(P_cherry, axis=0)
+                    M[4:8, 8:12] = P_cherry[:, :, k]
+                    M[8:12, 0:4] = -np.sum(P_cherry, axis=1)
+                    M[8:12, 4:8] = -P_cherry[:, :, k].T
+                elif opt.method == "P":
+                    # paper:
+                    M[0:4, 4:8] = np.sum(P_cherry, axis=1).T
+                    M[0:4, 8:12] = np.sum(P_cherry, axis=0).T
+                    M[4:8, 0:4] = -np.sum(P_cherry, axis=1)
+                    M[4:8, 8:12] = P_cherry[:, :, k]
+                    M[8:12, 0:4] = -np.sum(P_cherry, axis=0)
+                    M[8:12, 4:8] = -P_cherry[:, :, k].T
+                else:
+                    assert False
 
-                svs = np.linalg.svd(M[:, :], compute_uv=False)
-                # svs /= np.mean(svs)
-                score += np.sum(svs[8:] ** 2) / 8
+                svs = np.linalg.svd(M[:, :], compute_uv=False).astype(np.float32).astype(np.float64)
+                score += np.mean(svs[8:] ** 2) / np.mean(svs[:8] ** 2)
 
             for k in range(4):
                 N = np.zeros((12, 12), dtype=np.float64)
-                # Julia:
-                N[0:4, 4:8] = P_cherry[:, :, k]
-                N[0:4, 8:12] = np.sum(P_cherry, axis=0)
-                N[4:8, 0:4] = -P_cherry[:, :, k].T
-                N[4:8, 8:12] = np.sum(P_cherry, axis=1)
-                N[8:12, 0:4] = -np.sum(P_cherry, axis=0).T
-                N[8:12, 4:8] = -np.sum(P_cherry, axis=1).T
-                # # paper:
-                # N[0:4, 4:8] = P_cherry[:, :, k]
-                # N[0:4, 8:12] = np.sum(P_cherry, axis=1)
-                # N[4:8, 0:4] = -P_cherry[:,:,k].T
-                # N[4:8, 8:12] = np.sum(P_cherry, axis=0)
-                # N[8:12, 0:4] = -np.sum(P_cherry, axis=1).T
-                # N[8:12, 4:8] = -np.sum(P_cherry,axis=0).T
+                if opt.method == "J":
+                    # Julia:
+                    N[0:4, 4:8] = P_cherry[:, :, k]
+                    N[0:4, 8:12] = np.sum(P_cherry, axis=0)
+                    N[4:8, 0:4] = -P_cherry[:, :, k].T
+                    N[4:8, 8:12] = np.sum(P_cherry, axis=1)
+                    N[8:12, 0:4] = -np.sum(P_cherry, axis=0).T
+                    N[8:12, 4:8] = -np.sum(P_cherry, axis=1).T
+                elif opt.method == "P":
+                    # paper:
+                    N[0:4, 4:8] = P_cherry[:, :, k]
+                    N[0:4, 8:12] = np.sum(P_cherry, axis=1)
+                    N[4:8, 0:4] = -P_cherry[:, :, k].T
+                    N[4:8, 8:12] = np.sum(P_cherry, axis=0)
+                    N[8:12, 0:4] = -np.sum(P_cherry, axis=1).T
+                    N[8:12, 4:8] = -np.sum(P_cherry, axis=0).T
+                else:
+                    assert False
 
-                svs = np.linalg.svd(N[:, :], compute_uv=False)
-                # svs /= np.mean(svs)
-                score += np.sum(svs[8:] ** 2) / 8
+                svs = np.linalg.svd(N[:, :], compute_uv=False).astype(np.float32).astype(np.float64)
+                score += np.mean(svs[8:] ** 2) / np.mean(svs[:8] ** 2)
 
             svd_score[cherry_idx] = np.sqrt(score)
 
@@ -154,8 +166,8 @@ with open(opt.output, "w") as file:
 
         triplet_species: List[str] = [a_species, b_species, c_species]
         file.write(
-            f"{triplet_species[patterns[min_score_loc][0]]}"
-            f" {triplet_species[patterns[min_score_loc][1]]}"
-            f" {triplet_species[patterns[min_score_loc][2]]}"
+            f"{triplet_species[triplet_patterns[min_score_loc][0]]}"
+            f" {triplet_species[triplet_patterns[min_score_loc][1]]}"
+            f" {triplet_species[triplet_patterns[min_score_loc][2]]}"
             f" {weight}\n"
         )

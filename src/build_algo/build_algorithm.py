@@ -68,9 +68,7 @@ def gen_tree(triplets: List[Tuple[str, str, str]], *, node=None, tree=None):
         else:
             # filter triplets by component
             comp_triplets = [
-                (a, b, c)
-                for (a, b, c) in triplets
-                if all([x in comp for x in [a, b, c]])
+                (a, b, c) for (a, b, c) in triplets if all([x in comp for x in [a, b, c]])
             ]
             subnode = node.add_child()
             if len(comp_triplets) == 0:

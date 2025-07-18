@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "build_algo"
+dynamic = ["version"]
+authors = [
+    { name = "Adam C Knapp", email = "adam.knapp@medicine.ufl.edu" },
+]
+description = "A small example package"
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "ete3",
+    "networkx",
+    "scikit-learn",
+]
+
+[project.scripts]
+# build_algo = "build_algo:main_cli"
+gen_tree_triplets = "build_algo.gen_tree_triplets:main_cli"
+gen_triplet_svd_weights = "build_algo.gen_triplet_svd_weights:main_cli"
+
+[project.urls]
+Homepage = "https://github.com/knappa/build-algo"
+Issues = "https://github.com/knappa/build-algo"
