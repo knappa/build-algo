@@ -12,6 +12,8 @@ import numpy as np
 import scipy
 from ete3 import Tree
 
+from build_algo import spectral_laplacian_partition
+
 parser = argparse.ArgumentParser(
     description="Use a version of the BUILD algorithm on triplets to do tree reconstruction"
 )
@@ -101,7 +103,7 @@ def gen_tree_weighted(
         case "P":
             components = markov_p(adj_matrix=adj_matrix, species=species)
         case "L":
-            components = spectral_laplacian(adj_matrix=adj_matrix, species=species)
+            components = spectral_laplacian_partition(adj_matrix=adj_matrix, taxa=species)
         case "MCL":
             components = markov_clustering(
                 adj_matrix=adj_matrix,
@@ -195,54 +197,6 @@ def markov_clustering(*, adj_matrix, species, species_to_index):
     leftovers = list(set(species).difference(set(reduce(set.union, components, set()))))
     if len(leftovers) > 0:
         components.append(leftovers)
-    return components
-
-
-def spectral_laplacian(*, adj_matrix, species):
-    degree = np.sum(adj_matrix, axis=1)
-    L = np.diag(degree) - adj_matrix
-    evals, evecs = np.linalg.eigh(L)  # right eigenvectors
-    evals = evals.real.astype(np.float16).astype(np.float64)
-    evecs = evecs.real.astype(np.float16).astype(np.float64)
-    special_evals = np.isclose(evals, 0.0)
-    num_special_evals = np.sum(special_evals)
-    if num_special_evals > 1:
-        # When the graph is not connected, first eigenvalues are indicators for components.
-        # noinspection PyTupleAssignmentBalance
-        L, U = scipy.linalg.lu(
-            evecs[:, special_evals].T,
-            permute_l=True,
-        )
-        U = U.real.astype(np.float16)
-        component_vec = U[-1, :]
-        component_a = np.array(species)[component_vec == 0]
-        component_b = np.array(species)[component_vec != 0]
-    else:
-        idcs = np.argsort(evals)
-        second_smallest_idx = idcs[1]
-        special_evals = np.isclose(evals, evals[second_smallest_idx])
-
-        if np.sum(special_evals) > 1:
-            # noinspection PyTupleAssignmentBalance
-            L, U = scipy.linalg.lu(
-                evecs[:, special_evals].T,
-                permute_l=True,
-            )
-            U = U.real.astype(np.float16)
-            component_vec = U[-1, :]
-        else:
-            component_vec = evecs[:, second_smallest_idx]
-
-        pos_count = np.sum(component_vec > 0)
-        neg_count = np.sum(component_vec < 0)
-        # put the zeros with whichever side is smaller, ties to negative side
-        if pos_count < neg_count:
-            component_a = np.array(species)[component_vec >= 0]
-            component_b = np.array(species)[component_vec < 0]
-        else:
-            component_a = np.array(species)[component_vec > 0]
-            component_b = np.array(species)[component_vec <= 0]
-    components = [component_a, component_b]
     return components
 
 

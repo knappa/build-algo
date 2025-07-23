@@ -68,21 +68,23 @@ def main_cli():
 
                 # fix the LRA up
                 # sum to 1
-                low_rank_approx += (1-np.sum(low_rank_approx))/256
+                low_rank_approx += (1 - np.sum(low_rank_approx)) / 256
 
                 # projector onto subspace defined by the LRA
-                proj = (np.identity(16) - (Vh[rank:, :].T @ Vh[rank:, :]))
+                proj = np.identity(16) - (Vh[rank:, :].T @ Vh[rank:, :])
 
                 # fix any negatives while keeping inside the LRA defined space
                 min_loc = np.unravel_index(np.argmin(low_rank_approx), low_rank_approx.shape)
                 fix_count = 0
                 while low_rank_approx[min_loc] < 0.0 and fix_count <= 256:
-                    compensation = np.zeros((16,16))
+                    compensation = np.zeros((16, 16))
                     compensation[min_loc] = 1.0
-                    compensation -= 1/256
+                    compensation -= 1 / 256
                     compensation = compensation @ proj
                     if compensation[min_loc] != 0.0:
-                        low_rank_approx -= (low_rank_approx[min_loc]  / compensation[min_loc] )* compensation
+                        low_rank_approx -= (
+                            low_rank_approx[min_loc] / compensation[min_loc]
+                        ) * compensation
                         fix_count += 1
                     else:
                         break
@@ -92,9 +94,9 @@ def main_cli():
 
                     min_loc = np.unravel_index(np.argmin(low_rank_approx), low_rank_approx.shape)
 
-                test_statistic = np.sum(P_cherry_flat) * np.sum((p_hat - low_rank_approx)**2 / low_rank_approx)
-
-
+                test_statistic = np.sum(P_cherry_flat) * np.sum(
+                    (p_hat - low_rank_approx) ** 2 / low_rank_approx
+                )
 
                 # constraint = LinearConstraint(
                 #     A=np.concatenate(
