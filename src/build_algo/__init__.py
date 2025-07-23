@@ -37,6 +37,9 @@ def get_triplets_from_string(trip_str):
     triplets = list()
 
     for line in trip_str.split("\n"):
+        line = line.strip()
+        if len(line) == 0 or line[0] == "#":
+            continue
         a, b, c, _ = parse_triplet_line(line)
         triplets.append((a, b, c))
         taxa = taxa.union([a, b, c])
@@ -50,17 +53,25 @@ def parse_triplet_line(line):
     :param line: triplet encoded with the syntax "a,b|c weight"
     :return:
     """
-    line = line.strip()
     a_end = line.find(",")
+    if a_end == -1:
+        raise Exception(f"Error at:\n{line}")
     a = line[:a_end].strip()
-    line = line[a_end:].strip()
+    line = line[a_end + 1 :].strip()
+
     b_end = line.find("|")
+    if b_end == -1:
+        raise Exception(f"Error at:\n{line}")
     b = line[:b_end].strip()
-    line = line[b_end:].strip()
+    line = line[b_end + 1 :].strip()
+
     c_end = line.find(" ")
     if c_end > 0:
         c = line[:c_end].strip()
-        weight = float(line[c_end:].strip())
+        try:
+            weight = float(line[c_end + 1 :].strip())
+        except ValueError:
+            raise Exception(f"Error in weight:\n{line[c_end+1:].strip()}")
     else:
         c = line
         weight = None
@@ -121,6 +132,16 @@ def spectral_laplacian_partition(*, adj_matrix, taxa):
             component_b = np.array(taxa)[component_vec <= 0]
     components = [component_a, component_b]
     return components
+
+
+def gen_tree_from_triplet_file(triplet_file):
+    taxa, triplets = get_triplets_from_file(triplet_file)
+    return gen_tree(triplets).write(format=9)
+
+
+def gen_tree_from_string(triplet_string):
+    taxa, triplets = get_triplets_from_string(triplet_string)
+    return gen_tree(triplets).write(format=9)
 
 
 def gen_tree(
