@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [project.scripts]
-# build_algo = "build_algo:main_cli"
+build = "build_algo.build:main_cli"
 gen_tree_triplets = "build_algo.gen_tree_triplets:main_cli"
 gen_triplet_svd_weights = "build_algo.gen_triplet_svd_weights:main_cli"
 
