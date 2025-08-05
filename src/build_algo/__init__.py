@@ -180,6 +180,7 @@ def _gen_tree(
         subnode = node.add_child()
         subnode.add_child(name=a)
         subnode.add_child(name=b)
+        return
 
     # build the adjacency matrix for the spectral laplacian
     taxa: list = list(set(reduce(set.union, triplets, set())))
