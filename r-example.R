@@ -1,7 +1,11 @@
 library(reticulate)
 
 # install the python library from github or a local directory
-py_install("build_algo@git+https://github.com/knappa/build-algo.git", pip_options="-e")
+py_install(
+  "build_algo@git+https://github.com/knappa/build-algo.git",
+  method = c("virtualenv"),
+  pip_ignore_installed=TRUE,
+)
 # py_install("/home/knappa/build-algo/", pip_options="-e")
 
 # this may be redundant?
