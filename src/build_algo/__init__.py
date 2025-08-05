@@ -1,17 +1,17 @@
 from functools import reduce
-from typing import Sequence, Tuple
+from typing import List, Optional, Sequence, Set, Tuple
 
+import ete3
 import numpy as np
 import scipy
-from ete3 import Tree
 
 
-def get_triplets_from_file(trip_file):
+def get_triplets_from_file(trip_file) -> Tuple[Set[str], List[Tuple[str, str, str]]]:
     """
     Load unweighted triplets from a file
 
     :param trip_file: filename
-    :return: list of triplets
+    :return: tuple consisting of the set of taxa and a list of triplets
     """
     taxa = set()
     triplets = list()
@@ -25,7 +25,7 @@ def get_triplets_from_file(trip_file):
     return taxa, triplets
 
 
-def get_triplets_from_string(trip_str):
+def get_triplets_from_string(trip_str) -> Tuple[Set[str], List[Tuple[str, str, str]]]:
     """
     Load unweighted triplets from a string
 
@@ -47,7 +47,7 @@ def get_triplets_from_string(trip_str):
     return taxa, triplets
 
 
-def parse_triplet_line(line):
+def parse_triplet_line(line) -> Tuple[str, str, str, Optional[float]]:
     """
     Parse a line of a triplet file
     :param line: triplet encoded with the syntax "a,b|c weight"
@@ -87,6 +87,7 @@ def spectral_laplacian_partition(*, adj_matrix, taxa):
     :return: partition of `taxa` in the form of a pair of arrays
     """
     degree = np.sum(adj_matrix, axis=1)
+    # noinspection PyPep8Naming
     L = np.diag(degree) - adj_matrix
     evals, evecs = np.linalg.eigh(L)  # right eigenvectors
     evals = evals.real.astype(np.float16).astype(np.float64)
@@ -95,27 +96,30 @@ def spectral_laplacian_partition(*, adj_matrix, taxa):
     num_special_evals = np.sum(special_evals)
     if num_special_evals > 1:
         # When the graph is not connected, first eigenvalues are indicators for components.
-        # noinspection PyTupleAssignmentBalance
+        # noinspection PyPep8Naming
         L, U = scipy.linalg.lu(
             evecs[:, special_evals].T,
             permute_l=True,
         )
+        # noinspection PyPep8Naming
         U = U.real.astype(np.float16)
         component_vec = U[-1, :]
         zero_components = np.isclose(component_vec, 0.0)
-        component_a = np.array(taxa)[zero_components]
-        component_b = np.array(taxa)[~zero_components]
+        np_taxa = np.array(taxa)
+        component_a = np_taxa[zero_components]
+        component_b = np_taxa[~zero_components]
     else:
         idcs = np.argsort(evals)
         second_smallest_idx = idcs[1]
         special_evals = np.isclose(evals, evals[second_smallest_idx])
 
         if np.sum(special_evals) > 1:
-            # noinspection PyTupleAssignmentBalance
+            # noinspection PyPep8Naming
             L, U = scipy.linalg.lu(
                 evecs[:, special_evals].T,
                 permute_l=True,
             )
+            # noinspection PyPep8Naming
             U = U.real.astype(np.float16)
             component_vec = U[-1, :]
         else:
@@ -124,36 +128,37 @@ def spectral_laplacian_partition(*, adj_matrix, taxa):
         pos_count = np.sum(component_vec > 0)
         neg_count = np.sum(component_vec < 0)
         # put the zeros with whichever side is smaller, ties to negative side
+        np_taxa = np.array(taxa)
         if pos_count < neg_count:
-            component_a = np.array(taxa)[component_vec >= 0]
-            component_b = np.array(taxa)[component_vec < 0]
+            component_a = np_taxa[component_vec >= 0]
+            component_b = np_taxa[component_vec < 0]
         else:
-            component_a = np.array(taxa)[component_vec > 0]
-            component_b = np.array(taxa)[component_vec <= 0]
+            component_a = np_taxa[component_vec > 0]
+            component_b = np_taxa[component_vec <= 0]
     components = [component_a, component_b]
     return components
 
 
-def gen_tree_from_triplet_file(triplet_file):
+def gen_tree_from_triplet_file(triplet_file) -> str:
     taxa, triplets = get_triplets_from_file(triplet_file)
     return gen_tree(triplets).write(format=9)
 
 
-def gen_tree_from_string(triplet_string):
+def gen_tree_from_string(triplet_string) -> str:
     taxa, triplets = get_triplets_from_string(triplet_string)
     return gen_tree(triplets).write(format=9)
 
 
 def gen_tree(
     triplets: Sequence[Tuple[str, str, str]],
-):
+) -> ete3.TreeNode:
     """
     Generate a tree from a list of triplets, possibly with errors.
 
     :param triplets: sequence of triples a,b|c encoded as tuples (a,b,c).
     :return: ete3 Tree corresponding to the triplets
     """
-    tree = Tree()
+    tree = ete3.Tree()
     _gen_tree(triplets=triplets, node=tree)
     return tree
 
@@ -161,7 +166,7 @@ def gen_tree(
 def _gen_tree(
     *,
     triplets: Sequence[Tuple[str, str, str]],
-    node: Tree,
+    node: ete3.Tree,
 ) -> None:
     """
     Helper for gen_tree; generates a tree from a list of triplets, possibly with errors.
@@ -198,16 +203,18 @@ def _gen_tree(
 
     for component in components:
         if len(component) == 1:
-            # single taxon component
+            # single taxon component is added as a leaf
             member = list(component)[0]
             node.add_child(name=member)
         elif len(component) > 1:
+            # Either a multifurcation (hopefully bifurcation), or we need to recurse
             # filter triplets by component
             component_triplets = [
-                (a, b, c) for (a, b, c) in triplets if all([x in component for x in [a, b, c]])
+                triplet for triplet in triplets if all([x in component for x in triplet])
             ]
             subnode = node.add_child()
             if len(component_triplets) == 0:
+                # if there are no triplets, this must be a multifurcation node. Hopefully a cherry.
                 for member in component:
                     subnode.add_child(name=member)
             else:
