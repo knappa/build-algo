@@ -222,6 +222,7 @@ def agglomerative_spectral_partition(*, adj_matrix, taxa):
 
 def spectral_consensus_partition(*, adj_matrix, taxa):
     import itertools
+    import warnings
 
     component_a1, component_b1 = spectral_laplacian_partition(adj_matrix=adj_matrix, taxa=taxa)
     component_a2, component_b2 = cospectral_laplacian_partition(adj_matrix=adj_matrix, taxa=taxa)
@@ -244,7 +245,11 @@ def spectral_consensus_partition(*, adj_matrix, taxa):
         component_b = np_taxa[~a1_indicator]
         return [component_a, component_b]
 
-    print(f"num_disagreements: {num_disagreements}")
+    warnings.warn(
+        f"num_disagreements: {num_disagreements}",
+        category=RuntimeWarning,
+        stacklevel=1,
+    )
 
     # brute force it on the sites where the methods disagree.
     def score(indicator):
@@ -254,7 +259,9 @@ def spectral_consensus_partition(*, adj_matrix, taxa):
             return float("inf")
         edge_penalty = np.sum(adj_matrix[indicator, :][:, ~indicator])
         return (
-            edge_penalty + partition_a_size / partition_b_size + partition_b_size / partition_a_size
+            edge_penalty
+            * 0.5
+            * (partition_a_size / partition_b_size + partition_b_size / partition_a_size)
         )
 
     disagreement_sites = np.arange(len(taxa))[disagreement_locus]
@@ -278,14 +285,14 @@ def spectral_consensus_partition(*, adj_matrix, taxa):
     return [component_a, component_b]
 
 
-def gen_tree_from_triplet_file(triplet_file) -> str:
+def gen_tree_from_triplet_file(triplet_file, *, method: PartitionMethods = "spec_lap") -> str:
     taxa, triplets = get_triplets_from_file(triplet_file)
-    return gen_tree(triplets).write(format=9)
+    return gen_tree(triplets, method=method).write(format=9)
 
 
-def gen_tree_from_string(triplet_string) -> str:
+def gen_tree_from_string(triplet_string, *, method: PartitionMethods = "spec_lap") -> str:
     taxa, triplets = get_triplets_from_string(triplet_string)
-    return gen_tree(triplets).write(format=9)
+    return gen_tree(triplets, method=method).write(format=9)
 
 
 def gen_tree(

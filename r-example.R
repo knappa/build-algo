@@ -37,4 +37,17 @@ build.algo$gen_tree_from_string("a,b|c
   c,e|f
   d,e|f")
   
+# default algorithm is the spectral laplacian
 build.algo$gen_tree_from_triplet_file("/home/knappa/build-algo/test_data/test-triplets-1.txt")
+
+# spectral laplacian method
+build.algo$gen_tree_from_triplet_file("/home/knappa/build-algo/test_data/test-triplets-1.txt", method="spec_lap")
+
+# agglomerative clustering in a spectral embedding
+build.algo$gen_tree_from_triplet_file("/home/knappa/build-algo/test_data/test-triplets-1.txt", method="agg_cluster")
+
+# Spectral method on the cograph.
+build.algo$gen_tree_from_triplet_file("/home/knappa/build-algo/test_data/test-triplets-1.txt", method="cograph_spectral")
+
+# Method which accepts consensus between spectral laplacian and cograph methods; does brute force search on disagreement
+build.algo$gen_tree_from_triplet_file("/home/knappa/build-algo/test_data/test-triplets-1.txt", method="spectral_consensus")
