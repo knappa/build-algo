@@ -1,9 +1,11 @@
 from functools import reduce
-from typing import List, Optional, Sequence, Set, Tuple
+from typing import List, Literal, Optional, Sequence, Set, Tuple
 
 import ete3
 import numpy as np
 import scipy
+
+PartitionMethods = Literal["spec_lap", "agg_cluster", "cograph_spectral", "spectral_consensus"]
 
 
 def get_triplets_from_file(trip_file) -> Tuple[Set[str], List[Tuple[str, str, str]]]:
@@ -139,6 +141,143 @@ def spectral_laplacian_partition(*, adj_matrix, taxa):
     return components
 
 
+def cospectral_laplacian_partition(*, adj_matrix, taxa):
+    """
+    Partition a graph using a spectral laplacian method based on the cograph. The graph should be approximately
+    a disjoint union of two complete graphs. The method partitions the
+
+    :param adj_matrix: adjacency matrix of the graph (indices should correspond to order in `taxa`)
+    :param taxa: list of taxon/vertex names
+    :return: partition of `taxa` in the form of a pair of arrays
+    """
+    import warnings
+
+    # noinspection PyUnresolvedReferences
+    coadj_matrix = (adj_matrix != 0).astype(np.float64)
+    codegree = np.sum(coadj_matrix, axis=1)
+    coL = np.diag(codegree) - coadj_matrix
+
+    evals, evecs = np.linalg.eigh(coL)  # right eigenvectors
+    evals = evals.real.astype(np.float64)
+    evecs = evecs.real.astype(np.float64)
+
+    if evals[0] >= 0.0:
+        warnings.warn(
+            "No negative eigenvalues for graph complement; a good splitting is doubtful. "
+            "Falling back to standard spectral method."
+        )
+        return spectral_laplacian_partition(adj_matrix=adj_matrix, taxa=taxa)
+
+    component_vec = evecs[:, 0]
+
+    pos_count = np.sum(component_vec > 0)
+    neg_count = np.sum(component_vec < 0)
+    # put the zeros with whichever side is smaller, ties to negative side
+    np_taxa = np.array(taxa)
+    if pos_count < neg_count:
+        component_a = np_taxa[component_vec >= 0]
+        component_b = np_taxa[component_vec < 0]
+    else:
+        component_a = np_taxa[component_vec > 0]
+        component_b = np_taxa[component_vec <= 0]
+
+    components = [component_a, component_b]
+    return components
+
+
+def agglomerative_spectral_partition(*, adj_matrix, taxa):
+    """
+    Partition a graph using an agglomerative method in the spectral embedding.
+
+    :param adj_matrix: adjacency matrix of the graph (indices should correspond to order in `taxa`)
+    :param taxa: list of taxon/vertex names
+    :return: partition of `taxa` in the form of a pair of arrays
+    """
+    from sklearn.cluster import AgglomerativeClustering
+
+    degree = np.sum(adj_matrix, axis=1)
+    # noinspection PyPep8Naming
+    L = np.diag(degree) - adj_matrix
+    evals, evecs = np.linalg.eigh(L)  # right eigenvectors
+    evals = evals.real.astype(np.float64)
+    evecs = evecs.real.astype(np.float64)
+
+    # Only the smaller eigenvalues should be used as the higher eigenvalues tend to be "high frequency vibrations"
+    # (i.e. mostly noise) So we take the bottom quarter by absolute value. This is somewhat arbitrary and might
+    # be too large for more bigger trees. An alternative would be to cap it at 2 or 3.
+    tame_evals = evals <= np.quantile(np.abs(evals), 0.25)
+    embedding_vectors = evecs[:, tame_evals]
+
+    labels: np.ndarray = AgglomerativeClustering(n_clusters=2, linkage="ward").fit_predict(
+        embedding_vectors
+    )
+
+    np_taxa = np.array(taxa)
+    component_a = np_taxa[labels == 0]
+    component_b = np_taxa[labels != 0]
+
+    components = [component_a, component_b]
+    return components
+
+
+def spectral_consensus_partition(*, adj_matrix, taxa):
+    import itertools
+
+    component_a1, component_b1 = spectral_laplacian_partition(adj_matrix=adj_matrix, taxa=taxa)
+    component_a2, component_b2 = cospectral_laplacian_partition(adj_matrix=adj_matrix, taxa=taxa)
+
+    a1_indicator = np.array([taxon in component_a1 for taxon in taxa], dtype=bool)
+    a2_indicator = np.array([taxon in component_a2 for taxon in taxa], dtype=bool)
+
+    # try to match these as best as possible
+    agreement = np.sum(a1_indicator == a2_indicator)
+    counter_agreement = np.sum(a1_indicator == ~a2_indicator)
+    if counter_agreement > agreement:
+        a2_indicator = ~a2_indicator
+
+    disagreement_locus = a1_indicator != a2_indicator
+    num_disagreements = np.sum(disagreement_locus)
+
+    if num_disagreements == 0:
+        np_taxa = np.array(taxa)
+        component_a = np_taxa[a1_indicator]
+        component_b = np_taxa[~a1_indicator]
+        return [component_a, component_b]
+
+    print(f"num_disagreements: {num_disagreements}")
+
+    # brute force it on the sites where the methods disagree.
+    def score(indicator):
+        partition_a_size = np.sum(indicator)
+        partition_b_size = np.sum(~indicator)
+        if partition_a_size == 0 or partition_b_size == 0:
+            return float("inf")
+        edge_penalty = np.sum(adj_matrix[indicator, :][:, ~indicator])
+        return (
+            edge_penalty + partition_a_size / partition_b_size + partition_b_size / partition_a_size
+        )
+
+    disagreement_sites = np.arange(len(taxa))[disagreement_locus]
+    best_a_pattern = a1_indicator.copy()
+    best_score = score(best_a_pattern)
+    # TODO: limit the number of tries?
+    for count, ambig_pattern in enumerate(
+        itertools.product([True, False], repeat=len(disagreement_sites))
+    ):
+        a_indicator = a1_indicator.copy()
+        a_indicator[disagreement_locus] = ambig_pattern
+        test_score = score(a_indicator)
+        if test_score < best_score:
+            best_score = test_score
+            best_a_pattern = a_indicator
+
+    np_taxa = np.array(taxa)
+    component_a = np_taxa[best_a_pattern]
+    component_b = np_taxa[~best_a_pattern]
+
+    return [component_a, component_b]
+
+
 def gen_tree_from_triplet_file(triplet_file) -> str:
     taxa, triplets = get_triplets_from_file(triplet_file)
     return gen_tree(triplets).write(format=9)
@@ -151,15 +290,18 @@ def gen_tree_from_string(triplet_string) -> str:
 
 def gen_tree(
     triplets: Sequence[Tuple[str, str, str]],
+    *,
+    method: PartitionMethods = "spec_lap",
 ) -> ete3.TreeNode:
     """
     Generate a tree from a list of triplets, possibly with errors.
 
     :param triplets: sequence of triples a,b|c encoded as tuples (a,b,c).
+    :param method: which method to use to partition taxa
     :return: ete3 Tree corresponding to the triplets
     """
     tree = ete3.Tree()
-    _gen_tree(triplets=triplets, node=tree)
+    _gen_tree(triplets=triplets, node=tree, method=method)
     return tree
 
 
@@ -167,6 +309,7 @@ def _gen_tree(
     *,
     triplets: Sequence[Tuple[str, str, str]],
     node: ete3.Tree,
+    method: PartitionMethods = "spec_lap",
 ) -> None:
     """
     Helper for gen_tree; generates a tree from a list of triplets, possibly with errors.
@@ -196,7 +339,15 @@ def _gen_tree(
         adj_matrix[taxa_to_index[a], taxa_to_index[b]] += 1
         adj_matrix[taxa_to_index[b], taxa_to_index[a]] += 1
 
-    components = spectral_laplacian_partition(adj_matrix=adj_matrix, taxa=taxa)
+    match method:
+        case "spec_lap":
+            components = spectral_laplacian_partition(adj_matrix=adj_matrix, taxa=taxa)
+        case "agg_cluster":
+            components = agglomerative_spectral_partition(adj_matrix=adj_matrix, taxa=taxa)
+        case "cograph_spectral":
+            components = cospectral_laplacian_partition(adj_matrix=adj_matrix, taxa=taxa)
+        case "spectral_consensus":
+            components = spectral_consensus_partition(adj_matrix=adj_matrix, taxa=taxa)
 
     assert len(components) > 1, "No splitting found"
     assert all(len(component) > 0 for component in components), "One split was empty"
