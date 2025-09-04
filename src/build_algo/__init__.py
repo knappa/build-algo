@@ -1,3 +1,4 @@
+import gzip
 from functools import reduce
 from typing import List, Literal, Optional, Sequence, Set, Tuple
 
@@ -5,7 +6,14 @@ import ete3
 import numpy as np
 import scipy
 
-PartitionMethods = Literal["spec_lap", "agg_cluster", "cograph_spectral", "spectral_consensus"]
+PartitionMethods = Literal[
+    "spec_lap",
+    "unweighted_spec_lap",
+    "agg_cluster",
+    "cograph_spectral",
+    "consensus",
+    "collapsing",
+]
 
 
 def get_triplets_from_file(trip_file) -> Tuple[Set[str], List[Tuple[str, str, str]]]:
@@ -18,7 +26,12 @@ def get_triplets_from_file(trip_file) -> Tuple[Set[str], List[Tuple[str, str, st
     taxa = set()
     triplets = list()
 
-    with open(trip_file, "r") as file:
+    if trip_file.endswith(".gz"):
+        cm = gzip.open(trip_file, "rt")
+    else:
+        cm = open(trip_file, "rt")
+
+    with cm as file:
         for line in file:
             a, b, c, _ = parse_triplet_line(line)
             triplets.append((a, b, c))
@@ -73,14 +86,26 @@ def parse_triplet_line(line) -> Tuple[str, str, str, Optional[float]]:
         try:
             weight = float(line[c_end + 1 :].strip())
         except ValueError:
-            raise Exception(f"Error in weight:\n{line[c_end+1:].strip()}")
+            raise Exception(f"Error in weight:\n{line[c_end + 1:].strip()}")
     else:
         c = line
         weight = None
     return a, b, c, weight
 
 
-def spectral_laplacian_partition(*, adj_matrix, taxa):
+def unweighted_spectral_laplacian_partition(*, adj_matrix: np.ndarray, taxa):
+    """
+    Partition a graph using the spectral laplacian method on the unweighted adjacency matrix.
+
+    :param adj_matrix: adjacency matrix of the graph (indices should correspond to order in `taxa`, may be weighted)
+    :param taxa: list of taxon/vertex names
+    :return: partition of `taxa` in the form of a pair of arrays
+    """
+    # noinspection PyUnresolvedReferences
+    return spectral_laplacian_partition(adj_matrix=(adj_matrix != 0).astype(np.float64), taxa=taxa)
+
+
+def spectral_laplacian_partition(*, adj_matrix: np.ndarray, taxa):
     """
     Partition a graph using the spectral laplacian method.
 
@@ -90,8 +115,11 @@ def spectral_laplacian_partition(*, adj_matrix, taxa):
     """
     degree = np.sum(adj_matrix, axis=1)
     # noinspection PyPep8Naming
-    L = np.diag(degree) - adj_matrix
-    evals, evecs = np.linalg.eigh(L)  # right eigenvectors
+    laplacian = np.diag(degree) - adj_matrix
+    # we could also form the normalized laplacian by
+    # invsqrtD = np.diag(degree**-1/2)
+    # laplacian = np.identity(adj_matrix.shape[0]) - invsqrtD @ adj_matrix @ invsqrtD
+    evals, evecs = np.linalg.eigh(laplacian)  # right eigenvectors
     evals = evals.real.astype(np.float16).astype(np.float64)
     evecs = evecs.real.astype(np.float16).astype(np.float64)
     special_evals = np.isclose(evals, 0.0)
@@ -141,10 +169,10 @@ def spectral_laplacian_partition(*, adj_matrix, taxa):
     return components
 
 
-def cospectral_laplacian_partition(*, adj_matrix, taxa):
+def cospectral_partition(*, adj_matrix, taxa):
     """
-    Partition a graph using a spectral laplacian method based on the cograph. The graph should be approximately
-    a disjoint union of two complete graphs. The method partitions the
+    Partition a graph using a spectral method based on the cograph. The graph should be approximately
+    a disjoint union of two complete graphs.
 
     :param adj_matrix: adjacency matrix of the graph (indices should correspond to order in `taxa`)
     :param taxa: list of taxon/vertex names
@@ -153,13 +181,20 @@ def cospectral_laplacian_partition(*, adj_matrix, taxa):
     import warnings
 
     # noinspection PyUnresolvedReferences
-    coadj_matrix = (adj_matrix != 0).astype(np.float64)
-    codegree = np.sum(coadj_matrix, axis=1)
-    coL = np.diag(codegree) - coadj_matrix
+    coadj_matrix = (adj_matrix == 0).astype(np.float64)
+    coadj_matrix -= np.diag(np.diag(coadj_matrix))  # remove any self links
+    # # codegree = np.sum(coadj_matrix, axis=1)
+    # coL = np.diag(codegree) - coadj_matrix
 
-    evals, evecs = np.linalg.eigh(coL)  # right eigenvectors
+    if np.all(coadj_matrix == 0):
+        pass
+
+    evals, evecs = np.linalg.eigh(coadj_matrix)  # right eigenvectors
     evals = evals.real.astype(np.float64)
     evecs = evecs.real.astype(np.float64)
+
+    # check for anti-symmetry of the spectrum
+    # print((evals + evals[::-1]).astype(np.float16))
 
     if evals[0] >= 0.0:
         warnings.warn(
@@ -181,8 +216,77 @@ def cospectral_laplacian_partition(*, adj_matrix, taxa):
         component_a = np_taxa[component_vec > 0]
         component_b = np_taxa[component_vec <= 0]
 
+    if len(component_a) == 0 or len(component_b) == 0:
+        warnings.warn("Splitting at zero did not partition the taxa, splitting at the median.")
+        split_threshold = np.median(component_vec)
+        component_a = np_taxa[component_vec > split_threshold]
+        component_b = np_taxa[component_vec <= split_threshold]
+
+        if len(component_a) == 0 or len(component_b) == 0:
+            component_a = np_taxa[component_vec >= split_threshold]
+            component_b = np_taxa[component_vec < split_threshold]
+
+        if len(component_a) == 0 or len(component_b) == 0:
+            warnings.warn(
+                "Alternate splitting threshold failed, falling back to standard spectral method."
+            )
+            return spectral_laplacian_partition(adj_matrix=adj_matrix, taxa=taxa)
+
     components = [component_a, component_b]
     return components
+
+
+def collapsing_partition(*, adj_matrix, taxa):
+    """
+    Partition a graph using ...
+
+    :param adj_matrix: adjacency matrix of the graph (indices should correspond to order in `taxa`)
+    :param taxa: list of taxon/vertex names
+    :return: partition of `taxa` in the form of a pair of arrays
+    """
+    import itertools
+
+    components = set([(taxon,) for taxon in taxa])
+    connections = dict()
+    for taxon1_idx, taxon2_idx in itertools.combinations(range(len(taxa)), 2):
+        component1 = (taxa[taxon1_idx],)
+        component2 = (taxa[taxon2_idx],)
+        edge = tuple(sorted((component1, component2)))
+        connections[edge] = adj_matrix[taxon1_idx, taxon2_idx]
+
+    while len(components) > 2:
+        # get highest weight edge
+        (component1, component2), weight = sorted(connections.items(), key=lambda x: x[1])[0]
+        new_component = tuple(sorted(component1 + component2))
+
+        new_connections = dict()
+        for cpt1, cpt2 in itertools.combinations(components, 2):
+            cpt1_is_merged = cpt1 in {component1, component2}
+            cpt2_is_merged = cpt2 in {component1, component2}
+            old_edge = tuple(sorted((cpt1, cpt2)))
+            if not cpt1_is_merged and not cpt2_is_merged:
+                new_connections[old_edge] = connections[old_edge]
+            else:
+                if cpt1_is_merged and not cpt2_is_merged:
+                    new_edge = tuple(sorted((new_component, cpt2)))
+                elif not cpt1_is_merged and cpt2_is_merged:
+                    new_edge = tuple(sorted((cpt1, new_component)))
+                else:
+                    # both are from the merging set, any such edges are internal and not counted
+                    continue
+                if new_component in new_connections:
+                    # new_connections[new_edge] += connections[old_edge]
+                    new_connections[new_edge] = max(connections[old_edge],new_connections[new_edge])
+                else:
+                    new_connections[new_edge] = connections[old_edge]
+
+        components.remove(component1)
+        components.remove(component2)
+        components.add(new_component)
+
+        connections = new_connections
+
+    return list(components)
 
 
 def agglomerative_spectral_partition(*, adj_matrix, taxa):
@@ -205,7 +309,10 @@ def agglomerative_spectral_partition(*, adj_matrix, taxa):
     # Only the smaller eigenvalues should be used as the higher eigenvalues tend to be "high frequency vibrations"
     # (i.e. mostly noise) So we take the bottom quarter by absolute value. This is somewhat arbitrary and might
     # be too large for more bigger trees. An alternative would be to cap it at 2 or 3.
-    tame_evals = evals <= np.quantile(np.abs(evals), 0.25)
+    # noinspection PyTypeChecker
+    tame_evals: np.ndarray = evals <= np.quantile(np.abs(evals), 0.25)
+    tame_evals[0] = True
+    tame_evals[1] = True
     embedding_vectors = evecs[:, tame_evals]
 
     labels: np.ndarray = AgglomerativeClustering(n_clusters=2, linkage="ward").fit_predict(
@@ -220,12 +327,12 @@ def agglomerative_spectral_partition(*, adj_matrix, taxa):
     return components
 
 
-def spectral_consensus_partition(*, adj_matrix, taxa):
+def consensus_partition(*, adj_matrix, taxa, algorithm1, algorithm2):
     import itertools
     import warnings
 
-    component_a1, component_b1 = spectral_laplacian_partition(adj_matrix=adj_matrix, taxa=taxa)
-    component_a2, component_b2 = cospectral_laplacian_partition(adj_matrix=adj_matrix, taxa=taxa)
+    component_a1, component_b1 = algorithm1(adj_matrix=adj_matrix, taxa=taxa)
+    component_a2, component_b2 = algorithm2(adj_matrix=adj_matrix, taxa=taxa)
 
     a1_indicator = np.array([taxon in component_a1 for taxon in taxa], dtype=bool)
     a2_indicator = np.array([taxon in component_a2 for taxon in taxa], dtype=bool)
@@ -316,7 +423,7 @@ def _gen_tree(
     *,
     triplets: Sequence[Tuple[str, str, str]],
     node: ete3.Tree,
-    method: PartitionMethods = "spec_lap",
+    method: PartitionMethods,
 ) -> None:
     """
     Helper for gen_tree; generates a tree from a list of triplets, possibly with errors.
@@ -343,21 +450,32 @@ def _gen_tree(
     taxa_to_index = {s: i for i, s in enumerate(taxa)}
     adj_matrix = np.zeros((len(taxa), len(taxa)), dtype=np.float64)
     for a, b, c in triplets:
-        adj_matrix[taxa_to_index[a], taxa_to_index[b]] += 1
-        adj_matrix[taxa_to_index[b], taxa_to_index[a]] += 1
+        a_index = taxa_to_index[a]
+        b_index = taxa_to_index[b]
+        adj_matrix[a_index, b_index] += 1
+        adj_matrix[b_index, a_index] += 1
 
     match method:
         case "spec_lap":
             components = spectral_laplacian_partition(adj_matrix=adj_matrix, taxa=taxa)
+        case "unweighted_spec_lap":
+            components = unweighted_spectral_laplacian_partition(adj_matrix=adj_matrix, taxa=taxa)
         case "agg_cluster":
             components = agglomerative_spectral_partition(adj_matrix=adj_matrix, taxa=taxa)
         case "cograph_spectral":
-            components = cospectral_laplacian_partition(adj_matrix=adj_matrix, taxa=taxa)
-        case "spectral_consensus":
-            components = spectral_consensus_partition(adj_matrix=adj_matrix, taxa=taxa)
+            components = cospectral_partition(adj_matrix=adj_matrix, taxa=taxa)
+        case "consensus":
+            components = consensus_partition(
+                adj_matrix=adj_matrix,
+                taxa=taxa,
+                algorithm1=spectral_laplacian_partition,
+                algorithm2=agglomerative_spectral_partition,
+            )
+        case "collapsing":
+            components = collapsing_partition(adj_matrix=adj_matrix, taxa=taxa)
 
     assert len(components) > 1, "No splitting found"
-    assert all(len(component) > 0 for component in components), "One split was empty"
+    assert all(len(component) > 0 for component in components), "One split was empty" + f" {method}"
 
     for component in components:
         if len(component) == 1:
@@ -376,4 +494,4 @@ def _gen_tree(
                 for member in component:
                     subnode.add_child(name=member)
             else:
-                _gen_tree(triplets=component_triplets, node=subnode)
+                _gen_tree(triplets=component_triplets, node=subnode, method=method)

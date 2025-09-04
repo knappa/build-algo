@@ -4,8 +4,8 @@
 
 
 def main_cli():
-
     import argparse
+    import gzip
     import itertools
     import sys
 
@@ -14,35 +14,35 @@ def main_cli():
 
     parser = argparse.ArgumentParser(
         prog="gen_tree_triplets",
-        description="generate triplets with weights from a true tree for algorithm testing purposes",
+        description="generate triplets from a true tree for algorithm testing purposes",
     )
     parser.add_argument("--newick", required=True, help="newick file")
-    parser.add_argument("--output", required=True, help="output file")
-    parser.add_argument(
-        "--p", type=float, required=True, help="probability to choose wrong triplet"
-    )
-    parser.add_argument("--wt", type=float, default=1.0, help="weight for true triplets")
-    parser.add_argument("--wf", type=float, default=0.3, help="weight for false triplets")
+
+    output_group = parser.add_mutually_exclusive_group(required=False)
+    output_group.add_argument("--output", type=str, help="output file")
+    output_group.add_argument("--zoutput", type=str, help="compressed output file")
+
+    parser.add_argument("--p", type=float, default=0.0, help="probability to choose wrong triplet")
+    # parser.add_argument("--wt", type=float, default=1.0, help="weight for true triplets")
+    # parser.add_argument("--wf", type=float, default=0.3, help="weight for false triplets")
 
     if hasattr(sys, "ps1"):
-        # options for pasting into ipython
-        class Object:
-            pass
-
-        opt = Object()
-        opt.newick = "data/rtree_30_tips_1.nwk"
-        opt.output = "test.txt"
-        opt.p = 0.01
-        opt.wt = 1.0
-        opt.wf = 0.3
+        opt = parser.parse_args("--newick data/rtree_30_tips_1.nwk --p 0.01".split())
     else:
         opt = parser.parse_args()
-        print(opt)
+    print(opt)
 
     tree = ete3.Tree(opt.newick)
     leaves = [leaf for leaf in tree.traverse("postorder") if leaf.is_leaf()]
 
-    with open(opt.output, "w") as file:
+    if hasattr(opt, "output") and opt.output:
+        cm = open(opt.output, "wt")
+    elif hasattr(opt, "zoutput") and opt.zoutput:
+        cm = gzip.open(opt.zoutput, "wt")
+    else:
+        cm = sys.stdout
+
+    with cm as file:
         for trip in itertools.combinations(leaves, 3):
             subroot = tree.get_common_ancestor(*trip)
             a, b = None, None
@@ -55,11 +55,14 @@ def main_cli():
             if r < opt.p:
                 # evenly split likelihood between the two false triplets, when false is chosen
                 if r < opt.p / 2:
-                    file.write(f"{a.name} {c.name} {b.name} {opt.wf}\n")
+                    # file.write(f"{a.name},{c.name}|{b.name} {opt.wf}\n")
+                    file.write(f"{a.name},{c.name}|{b.name}\n")
                 else:
-                    file.write(f"{b.name} {c.name} {a.name} {opt.wf}\n")
+                    # file.write(f"{b.name},{c.name}|{a.name} {opt.wf}\n")
+                    file.write(f"{b.name},{c.name}|{a.name}\n")
             else:
-                file.write(f"{a.name} {b.name} {c.name} {opt.wt}\n")
+                # file.write(f"{a.name},{b.name}|{c.name} {opt.wt}\n")
+                file.write(f"{a.name},{b.name}|{c.name}\n")
 
 
 if __name__ == "__main__":

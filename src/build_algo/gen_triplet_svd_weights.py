@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # generate triplet weights
-from networkx.algorithms.structuralholes import constraint
 
 
 def main_cli():
@@ -10,7 +9,6 @@ def main_cli():
     from typing import List
 
     import numpy as np
-    from scipy.optimize import LinearConstraint, minimize
 
     from build_algo.util import read_phylip
 
